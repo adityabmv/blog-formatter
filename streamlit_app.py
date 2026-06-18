@@ -55,8 +55,15 @@ def _normalise_latex(latex, strip_display_env=False):
     if strip_display_env:
         latex = re.sub(r'^\\\[\s*', '', latex)
         latex = re.sub(r'\s*\\\]$', '', latex)
-        latex = re.sub(r'\\phantom\{\\rule\{[^}]*\}\{[^}]*\}\}', ' ', latex)
+        latex = re.sub(r'\\phantom\{\\rule\{[^}]*\}\{[^"]*\}\}', ' ', latex)
         latex = re.sub(r'\s+', ' ', latex).strip()
+    # Fix mml2tex artefact: \overset{\overparen }{X} → \overparen{X}
+    # mml2tex puts the arc symbol as the "over" argument with a trailing space,
+    # but \overparen / \underparen take the content as their own argument.
+    latex = re.sub(r'\\overset\{\\overparen\s*\}\{(.*?)\}', r'\\overparen{\1}', latex)
+    latex = re.sub(r'\\overset\{\\underparen\s*\}\{(.*?)\}', r'\\underparen{\1}', latex)
+    # \boldsymbol is not loaded by default in MathJax → replace with \mathbf
+    latex = re.sub(r'\\boldsymbol\{', r'\\mathbf{', latex)
     # \left(\begin{array}{c…}\end{array}\right) → \begin{pmatrix}…\end{pmatrix}
     latex = re.sub(
         r'\\left\(\\begin\{array\}\{c+\}(.*?)\\end\{array\}\\right\)',
@@ -64,6 +71,10 @@ def _normalise_latex(latex, strip_display_env=False):
     latex = re.sub(
         r'\(\\begin\{array\}\{c+\}(.*?)\\end\{array\}\)',
         r'\\begin{pmatrix}\1\\end{pmatrix}', latex, flags=re.DOTALL)
+    # \left[\begin{array}{c…}\end{array}\right] → \begin{bmatrix}…\end{bmatrix}
+    latex = re.sub(
+        r'\\left\[\\begin\{array\}\{c+\}(.*?)\\end\{array\}\\right\]',
+        r'\\begin{bmatrix}\1\\end{bmatrix}', latex, flags=re.DOTALL)
     return latex
 
 
@@ -306,10 +317,21 @@ def _preprocess_mathml(s):
 # Public converters: v1 (mml2tex) and v2 (mathml2tex)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _has_menclose_table(s):
+    """Check if MathML has <menclose> wrapping <mtable> (needs Python fallback for borders)."""
+    return bool(re.search(r'<menclose[^>]*notation=[^>]*left[^>]*top[^>]*right[^>]*bottom', s, re.DOTALL))
+
+
 def mathml_to_latex_v1(mathml_str):
-    """mml2tex (Saxon) → Node.js → Python fallback."""
+    """mml2tex (Saxon) → Node.js → Python fallback.
+
+    Only the menclose+mtable pattern (outer-bordered tables) uses the Python
+    fallback, because mml2tex cannot render the outer border from <menclose>.
+    All other MathML (including mtable with rowlines/columnlines) goes to mml2tex
+    which handles it natively via \\begin{array}{c|c|}...\\hline...
+    """
     mathml_str = _preprocess_mathml(mathml_str)
-    if _has_bordered_table(mathml_str):
+    if _has_menclose_table(mathml_str):
         return _mathml_fallback(mathml_str)
     if MML2TEX_OK:
         try:
@@ -598,8 +620,18 @@ def _convert_display_math(line_html, mathml_to_latex_fn):
     return None
 
 
+def _is_mathcha_editor_html(html_content):
+    """Return True if this looks like raw Mathcha/WIRIS editor HTML (needs conversion)."""
+    return bool(re.search(r'<editarea[\s>]|role-mathmode-area|<compositeblock[\s>]', html_content))
+
+
 def process_html(html_content, mathml_to_latex_fn, verbose=False):
-    """Convert WIRIS/MathType HTML to clean HTML using the given MathML converter."""
+    """Convert WIRIS/MathType HTML to clean HTML using the given MathML converter.
+    If the input is already clean HTML (no Mathcha editor tags), return it as-is.
+    """
+    if not _is_mathcha_editor_html(html_content):
+        return html_content
+
     cs = html_content.find('<body')
     if cs == -1: return html_content
     body_start = html_content.find('>', cs) + 1

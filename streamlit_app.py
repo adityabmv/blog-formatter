@@ -392,7 +392,9 @@ def _inject_svg_dimensions(svg):
         rm = re.search(r'<rect[^>]*width="([^"]+)"[^>]*height="([^"]+)"[^>]*class="real"', svg)
     if rm:
         w, h = float(rm.group(1)) + 2, float(rm.group(2)) + 2
+        # SVG opening tag may be followed by a space OR a newline
         svg = svg.replace('<svg ', f'<svg width="{w:.0f}" height="{h:.0f}" ', 1)
+        svg = svg.replace('<svg\n', f'<svg width="{w:.0f}" height="{h:.0f}"\n', 1)
     return svg
 
 
@@ -451,9 +453,12 @@ def _extract_svg_from_diagram(elem_str, mathml_to_latex_fn):
             svgs = [s for s in re.findall(r'(<svg[^>]*>.*?</svg>)', inner, re.DOTALL) if len(s) > 100]
         if svgs:
             svg = re.sub(r'\s+', ' ', _inject_svg_dimensions(svgs[0]))
-            wm = re.search(r'width="([^"]+)"', svg)
-            hm = re.search(r'height="([^"]+)"', svg)
-            w, h = (wm.group(1) if wm else '800'), (hm.group(1) if hm else '302')
+            # Read dimensions from <rect class="real"> — NOT from the first
+            # width= in the SVG (which hits stroke-width="0.5" on <line> elements)
+            rm = (re.search(r'<rect[^>]*class="real"[^>]*width="([^"]+)"[^>]*height="([^"]+)"', svg) or
+                  re.search(r'<rect[^>]*width="([^"]+)"[^>]*height="([^"]+)"[^>]*class="real"', svg))
+            w = str(float(rm.group(1)) + 2) if rm else '800'
+            h = str(float(rm.group(2)) + 2) if rm else '302'
             if labels:
                 return (f'<div style="position:relative;display:inline-block;'
                         f'width:{w}px;height:{h}px;">{svg}{labels}</div>')

@@ -1,1 +1,4 @@
 streamlit
+beautifulsoup4
+mml2tex>=0.1.0
+mathml2tex @ git+https://github.com/stultus/mathml2tex.git
